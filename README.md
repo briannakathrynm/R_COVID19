@@ -12,3 +12,5 @@ epidemics/pandemics/outbreaks such as Ebola, H1N1, and SARS.
 
 So far, this project uses R to look at different trends/attributes and their correlation with the virus. 
 More will be added in time.
+
+The **RMarkdown File** has the entire project in it. All data used is in the **data** folder.
