@@ -1,0 +1,505 @@
+---
+title: "Research_Project"
+author: "Brianna MacDonald"
+date: "12/10/2020"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Importing packages
+library(readr)
+library(tidyverse)
+library(plotly)
+library(ggthemes)
+library(gganimate)
+library(geosphere)
+library(DT)
+library(scales)
+library(openair)
+library(corrplot)
+library(viridisLite)
+library(viridis)
+library(RColorBrewer)
+library(ggdark)
+library(anytime)
+library(usmap)
+library(covid19nytimes)
+library(sigr)
+library(caret)
+library(glmnet)
+library(Metrics)
+```
+
+## Initial Visualization of Worldwide Number of Cases
+
+```{r cases_worldwide}
+# Importing data
+ts_confirmed <- read_csv(file = "time_series_covid_19_confirmed.csv",
+                         col_types = cols(
+                           .default = col_double(),
+                           `Province/State` = col_character(),
+                           `Country/Region` = col_character()
+                         ))
+
+ts_recovered <- read_csv(file = "time_series_covid_19_recovered.csv",
+                         col_types = cols(
+                           .default = col_double(),
+                           `Province/State` = col_character(),
+                           `Country/Region` = col_character()
+                         ))
+
+ts_deaths <- read_csv(file = "time_series_covid_19_deaths.csv",
+                      col_types = cols(
+                        .default = col_double(),
+                        `Province/State` = col_character(),
+                        `Country/Region` = col_character()
+                      ))
+
+codes <- read_csv('https://raw.githubusercontent.com/plotly/datasets/master/2014_world_gdp_with_codes.csv',
+                  col_types = cols(
+                    COUNTRY = col_character(),
+                    `GDP (BILLIONS)` = col_double(),
+                    CODE = col_character()
+                  ))
+# Preprocessing Data
+ts_confirmed <- ts_confirmed %>%
+  mutate(Date = as.Date(Date, "%m/%d/%y"))
+
+  gather("Date", "Confirmed", -c("Province/State", "Country/Region", "Lat", "Long")) %>%
+ts_recovered <- ts_recovered %>%
+  gather("Date", "Recovered", -c("Province/State", "Country/Region", "Lat", "Long")) %>%
+  mutate(Date = as.Date(Date, "%m/%d/%y"))
+
+ts_deaths <- ts_deaths %>%
+  gather("Date", "Deaths", -c("Province/State", "Country/Region", "Lat", "Long")) %>%
+  mutate(Date = as.Date(Date, "%m/%d/%y"))
+
+# Organizing data
+ts_total <- ts_confirmed %>%
+  left_join(ts_deaths) %>%
+  left_join(ts_recovered) %>%
+  mutate(Recovered = replace_na(Recovered, replace = 0))
+
+## We all know "Diamond Princess" and "MS Zaandam" are cruises, So we have to remove them from the data
+
+ts_total <- ts_total %>%
+  filter(`Country/Region` != "Diamond Princess") %>%
+  filter(`Country/Region` != "MS Zaandam")
+
+ts_total$Deaths[is.na(ts_total$Deaths)] <- 0
+
+## Created a dataset including latest news of COVID-19
+
+cases_latest <- ts_total %>%
+  group_by(`Country/Region`, Date) %>%
+  summarise(Confirmed  = sum(Confirmed),
+            Recovered = sum(Recovered),
+            Deaths = sum(Deaths)) %>%
+  mutate("New Cases" = Confirmed - lag(Confirmed, 1) ) %>%
+  filter(Date == max(Date))
+
+day_latest <- max(cases_latest$Date)
+
+cases_total_date <- ts_total %>%
+  rename(Region = `Country/Region`) %>%
+  group_by(Date) %>%
+  summarise(Confirmed = sum(Confirmed),
+            Deaths = sum(Deaths),
+            Recovered = sum(Recovered)) %>%
+  mutate("New_Cases" = Confirmed - lag(Confirmed, 1))
+
+cases_total_date$New_Cases[is.na(cases_total_date$New_Cases)] <- 0 
+
+cases_total_latest <- cases_total_date %>%
+  filter(Date == max(Date))
+
+# Visualization
+cases_all <- cases_total_date %>%
+  select(-Confirmed, -New_Cases) %>%
+  gather("Status", "Cases", -"Date")
+
+barchart <- ggplot(data = cases_total_date, aes(x = Date)) +
+  geom_bar(aes(y = Confirmed), position = "stack", stat = "identity", fill = "#ff5050") +
+  geom_bar(data = cases_all, aes(y = Cases, fill = Status), position = "stack", stat = "identity") +
+  scale_fill_manual(values = c("#000000", "#009900")) +
+  scale_y_continuous(breaks = seq(0, 21000000, by = 1000000), labels = comma) +
+  theme_solarized(base_size = 10, light = TRUE)+
+  theme(plot.margin = margin(0, 0, 0, 0, "pt"),
+        panel.background = element_rect(fill = "White"),
+        legend.position = "bottom",
+        axis.title = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank()) +
+  ggtitle("World COVID-19 Total Cases by Day")
+
+ggplotly(barchart) %>%
+  layout(legend = list(orientation = 'h'))
+```
+
+## Correlations
+
+```{r case_corr}
+# Mortality rate and recovery rate
+cases_total_date <- cases_total_date %>%
+  group_by(Date, Confirmed) %>%
+  mutate(Mortality_rate = Deaths / Confirmed,
+         Recovery_rate = Recovered / Confirmed) %>%
+  ungroup()
+
+# Correlations
+cases_total_date %>%
+  select(-Date) %>%
+  na.omit() %>%
+  cor(use = "pairwise.complete.obs") %>%
+  corrplot.mixed(tl.col = "black", tl.pos = "d", tl.cex = 0.7, cl.cex = 0.7,
+                  number.cex = 0.7)
+
+```
+
+## US Cases by State, March
+```{r us_cases_by_state_march}
+# March 15th, August 15th, November 15th
+us <- dt %>%
+    filter(Country == "US") %>%
+    mutate(Province = case_when(
+           Province == "Chicago"~"Illinois",
+           TRUE~Province)) %>%
+    filter(Province!= "Recovered")
+
+pop <- read_csv("US_State_Population.csv",
+        col_types = cols(Province = col_character(), pop2020 = col_number(), lat = col_number(), lon = col_number())) %>%
+        mutate(Province = case_when(
+                Province == "U.S. Virgin Islands"~"Virgin Islands",
+                TRUE~Province))
+# March 15th
+us_map <- us %>% left_join(pop, by = "Province") %>%
+    filter(Date == anydate("03/15/2020"))
+# Mapping
+us_map <- us_map %>%
+    mutate(confirmed_per_capita = Confirmed/pop2019)
+
+teal <- "#008080" #RGB color code
+
+plot_usmap(data = us_map, values = "Confirmed", color = teal, labels = TRUE) +
+    scale_fill_continuous(low = "white", high = teal, name = "Confirmed Cases", label = scales::comma) +
+    theme(legend.position = "right") +
+    theme(panel.background = element_rect(colour = "black")) +
+    labs(title = "Confirmed", caption = "Confirmed Cases as of 15 March ")
+
+plot_usmap(data = us_map, values = "confirmed_per_capita", color = teal, labels = TRUE) +
+    scale_fill_continuous(low = "white", high = teal, name = "Confirmed Cases", label = scales::comma) +
+    theme(legend.position = "right") +
+    theme(panel.background = element_rect(colour = "black")) +
+    labs(title = "Confirmed per Capita", caption = "Confirmed Cases per Capita as of March 15th ")
+```
+## US Cases by State, August
+```{r us_cases_by_state_august}
+# August 15th
+us_map <- us %>% left_join(pop, by = "Province") %>%
+    filter(Date == anydate("08/15/2020"))
+# Mapping
+us_map <- us_map %>%
+    mutate(confirmed_per_capita = Confirmed/pop2019)
+
+plot_usmap(data = us_map, values = "Confirmed", color = teal, labels = TRUE) +
+    scale_fill_continuous(low = "white", high = teal, name = "Confirmed Cases", label = scales::comma) +
+    theme(legend.position = "right") +
+    theme(panel.background = element_rect(colour = "black")) +
+    labs(title = "Confirmed", caption = "Confirmed Cases as of 15 August ")
+
+plot_usmap(data = us_map, values = "confirmed_per_capita", color = teal, labels = TRUE) +
+    scale_fill_continuous(low = "white", high = teal, name = "Confirmed Cases", label = scales::comma) +
+    theme(legend.position = "right") +
+    theme(panel.background = element_rect(colour = "black")) +
+    labs(title = "Confirmed per Capita", caption = "Confirmed Cases per Capita as of August 15th ")
+```
+## US Cases by State, November
+```{r us_cases_by_state_nov}
+# November 15th
+us_map <- us %>% left_join(pop, by = "Province") %>%
+    filter(Date == anydate("11/15/2020"))
+# Mapping
+us_map <- us_map %>%
+    mutate(confirmed_per_capita = Confirmed/pop2019)
+
+plot_usmap(data = us_map, values = "Confirmed", color = teal, labels = TRUE) +
+    scale_fill_continuous(low = "white", high = teal, name = "Confirmed Cases", label = scales::comma) +
+    theme(legend.position = "right") +
+    theme(panel.background = element_rect(colour = "black")) +
+    labs(title = "Confirmed", caption = "Confirmed Cases as of 15 November ")
+
+plot_usmap(data = us_map, values = "confirmed_per_capita", color = teal, labels = TRUE) +
+    scale_fill_continuous(low = "white", high = teal, name = "Confirmed Cases", label = scales::comma) +
+    theme(legend.position = "right") +
+    theme(panel.background = element_rect(colour = "black")) +
+    labs(title = "Confirmed per Capita", caption = "Confirmed Cases per Capita as of November 15th ")
+```
+## How has quarantine affected the spred of COVID-19?
+Looking at the following states of interest: New York, Washington, Rhode Island, Florida, California for number of confirmed deaths before and after quarantine.
+```{r quar_before_after_deaths}
+# Refreshing data
+covid19nytimes_states <- refresh_covid19nytimes_states()
+
+covid19nytimes_counties <- refresh_covid19nytimes_counties()
+# Viewing data by states
+covid19nytimes_states %>%
+  filter(location %in% c("New York", "Illinois", "California", "Texas")) %>%
+  filter(data_type == "deaths_total") %>%
+  ggplot(aes(x = date, y = value, color = location)) +
+  geom_line() +
+  theme_minimal(base_size=14) +
+  scale_y_continuous() +
+  ggtitle("Confirmed Deaths in US States")
+```
+Looking at the following states of interest: New York, Washington, Rhode Island, Florida, California for number of confirmed cases before and after quarantine.
+```{r quar_before_after_cases}
+# Refreshing data
+covid19nytimes_states <- refresh_covid19nytimes_states()
+
+covid19nytimes_counties <- refresh_covid19nytimes_counties()
+# Viewing data by states
+covid19nytimes_states %>%
+  filter(location %in% c("New York", "Illinois", "California", "Texas")) %>%
+  filter(data_type == "cases_total") %>%
+  ggplot(aes(x = date, y = value, color = location)) +
+  geom_line() +
+  theme_minimal(base_size=14) +
+  scale_y_continuous() +
+  ggtitle("Confirmed Cases in US States")
+```
+## Regression Model: Chicago
+```{r predicting_covid1}
+set.seed(143)
+chicago <- read.csv("COVID-19_Daily_Testing.csv")
+head(chicago, n=10)
+chicago$Tests <- gsub(',', '', chicago$Tests)
+chicago$Cases <- gsub(',', '', chicago$Cases)
+chicago$Tests <- as.numeric(chicago$Tests)
+chicago$Cases <- as.numeric(chicago$Cases)
+print(chicago$Cases)
+ 
+# Splitting the data into test and train, 80% split/20
+row.number <- sample(1:nrow(chicago), 0.8*nrow(chicago))
+train = chicago[row.number,]
+test = chicago[-row.number,]
+dim(train)
+dim(test)
+# Regression
+lmchicago <- lm(chicago$Cases~chicago$Tests, data = train)
+wrapFTest(lmchicago)
+```
+## Predicting values for our Regression Model
+```{r pred_lr}
+prediction <- predict(lmchicago)
+ggplot(lmchicago, aes(x = prediction, y = chicago$Cases)) + 
+  geom_point() +
+  geom_abline(color = "blue")
+```
+## Logistic Linear Regression
+```{r log}
+glm.fit <- glm(chicago$Cases~chicago$Tests, data = train, family = binomial)
+summary(glm.fit)
+glm.probs <- predict(glm.fit)
+glm.probs[1:5]
+```
+## Polynomial Regression
+```{r poly}
+plot(chicago$Cases, chicago$Tests)
+
+model_1 <- lm(chicago$Cases ~ poly(chicago$Tests, 1))
+
+# Summary statistics for model_1
+summary(model_1)
+
+model_2 <- lm(chicago$Cases ~ poly(chicago$Tests, 2))  
+
+# Summary statistics for model_2
+summary(model_2)
+
+model_3 <- lm(chicago$Cases ~ poly(chicago$Tests, 3))
+
+# Summary statistics for model_3
+summary(model_3)
+
+model_4 <- lm(chicago$Cases ~ poly(chicago$Tests, 4))
+
+# Summary statistics for model_3, R2 of 87.01, 2.2e-16 p-value
+summary(model_4)
+# Predictions for this model
+poly_pred <- predict(model_4)
+```
+## Examining best model *model_4*
+```{r model_4}
+ggplot(model_4, aes(x = poly_pred, y = chicago$Cases)) + 
+  geom_point() +
+  geom_abline(color = "red")
+```
+## Evaluating Model
+```{r eval}
+# First model
+RMSE(chicago$Cases, prediction)
+R2(chicago$Cases, prediction)
+mae(chicago$Cases, prediction)
+# Second model
+RMSE(chicago$Cases, poly_pred)
+R2(chicago$Cases, poly_pred)
+mae(chicago$Cases, poly_pred)
+wrapFTest(model_4)
+```
+## Comparing models
+```{r compare}
+anova(lmchicago, model_4)
+```
+## Exploring more about Illinois
+```{r illinois}
+library(ggplot2)
+illinois <- read.csv("latest_IL.csv")
+head(illinois, n=10)
+total_cases <- illinois$total_cases
+total_deaths <- illinois$total_deaths
+dates <- illinois$date
+ggplot(aes(x = dates, y = total_cases), data = illinois) +
+  geom_line() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  scale_y_continuous() +
+  ggtitle("Confirmed Deaths in Illinois")
+```
+## Linear Regresssion for Future Illinois Cases
+```{r illinois_reg}
+set.seed(153)
+
+# Regression
+lmillinois <- lm(total_cases~total_deaths, data = illinois)
+wrapFTest(lmillinois)
+```
+## Predicting values for our Regression Model
+```{r pred_lr}
+prediction_il <- predict(lmillinois)
+ggplot(lmillinois, aes(x = prediction_il, y = total_cases)) + 
+  geom_point() +
+  geom_abline(color = "green")
+```
+## Evaluating Model
+```{r eval}
+# Evaluating model
+RMSE(total_cases, prediction_il)
+R2(total_cases, prediction_il)
+mae(total_cases, prediction_il)
+anova(lmillinois)
+```
+## Polynomial Regression Illinois
+```{r poly_il}
+model_5 <- lm(total_cases ~ poly(total_deaths, 4))
+summary(model_5)
+# Predictions for this model
+poly_pred_il <- predict(model_5)
+```
+## Plotting poly illinois
+```{r plot_poly_il}
+ggplot(model_5, aes(x = poly_pred_il, y = total_cases)) + 
+  geom_point() +
+  geom_abline(color = "green")
+```
+## Evaluating poly illinois model
+```{r eval}
+# Evaluating model
+# Linear model
+RMSE(total_cases, prediction_il)
+R2(total_cases, prediction_il)
+mae(total_cases, prediction_il)
+# Polynomial Model
+RMSE(total_cases, poly_pred_il)
+R2(total_cases, poly_pred_il)
+mae(total_cases, poly_pred_il)
+```
+## Sample Data
+```{r sampling_data}
+illinois <- read.csv("latest_IL.csv")
+summary(illinois, n=10)
+```
+## Training/Predicting with Regression Trees
+```{r regr_trees}
+# Splitting the data into test and train, 80% split/20
+row.number <- sample(1:nrow(illinois), 0.8*nrow(illinois))
+train = illinois[row.number,]
+test = illinois[-row.number,]
+summary(train)
+```
+## Building model for predicting non-positive cases
+```{r building_model_cases}
+num_folds <- trainControl(method = "cv", number = 5) # Specify 5-fold cross-validation.
+parameter_grid <- expand.grid(.cp = 0)
+# Predicting Confirmed Cases
+il_1 <- read.csv("COVID-19_Daily_Testing.csv")
+il_1$People.Not.Positive...Total <- as.numeric(il_1$People.Not.Positive...Total)
+il_1$Tests <- as.numeric(il_1$Tests)
+row.number <- sample(1:nrow(il_1), 0.8*nrow(il_1))
+train_il1 = il_1[row.number,]
+test_il1 = il_1[-row.number,]
+summary(train_il1)
+# Making model
+cases_model <- train(People.Not.Positive...Total ~ Tests,  
+  data = train_il1, 
+  method = "rpart", # CART algorithm
+  trControl = num_folds, 
+  tuneGrid = parameter_grid,
+  na.action=na.exclude
+)
+
+print(cases_model)
+```
+## Building model for predicting fatalities
+```{r building_model_deaths}
+# Predicting new deaths
+il_2 <- read.csv("COVID-19_Daily_Cases__Deaths__and_Hospitalizations.csv")
+row.number <- sample(1:nrow(il_2), 0.65*nrow(il_2))
+train_il = il_2[row.number,]
+test_il = il_2[-row.number,]
+# Making model
+death_model <- train(
+  Deaths...Total ~ Cases...Total + Hospitalizations...Total,  
+  data = train, 
+  method = "rpart", # CART algorithm
+  trControl = num_folds, 
+  tuneGrid = parameter_grid,
+  na.action=na.exclude
+)
+
+print(death_model)
+```
+## Predicting Positive Cases in Females Aged 40-49 using Regression Trees
+```{r 18_24}
+# Splitting the data into test and train, 65% split/35
+summary(chicago)
+split <- initial_split(chicago, prop = .65)
+train = chicago[split,]
+test = chicago[-split,]
+summary(train)
+# Predicting new deaths
+cases_18 <- train(
+  Cases ~ People.Tested...Age.40.49 + 
+  People.Tested...Female,  
+  data = train, 
+  method = "rpart", # CART algorithm
+  trControl = num_folds, 
+  tuneGrid = parameter_grid
+)
+print(cases_18)
+
+```
+```{r delete}
+summary(cases_18)
+```
+## Plotting Positive Cases in Females Aged 40-49 using RPart
+```{r cases_rpart}
+library(rpart.plot)
+rpart_18 <- rpart(
+  People.Positive...Age.40.49 ~ People.Tested...Age.40.49 + 
+  People.Tested...Female,  
+  data = train, 
+  method  = "anova"
+  )
+# Predictions for this model
+rpart.plot(rpart_18)
+```
