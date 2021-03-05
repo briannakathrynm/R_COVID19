@@ -1,5 +1,6 @@
 # R_COVID19
 Final project for STA441 at URI.
+<br><br>
 In December 2019, COVID-19 coronavirus was first identified in the Wuhan region of China. By
 March 11, 2020, the World Health Organization (WHO) categorized the COVID-19 outbreak as a
 pandemic. A lot has happened in the months in between with major outbreaks in Iran, South
@@ -9,8 +10,8 @@ shutdowns and quarantines? Through this project and the various research I put i
 to identify common trends in quarantine practices that have been beneficial in both countries
 and in universities/states, as well as comparing different factors of COVID-19 to other
 epidemics/pandemics/outbreaks such as Ebola, H1N1, and SARS.
-
+<br><br>
 So far, this project uses R to look at different trends/attributes and their correlation with the virus. 
 More will be added in time.
-
+<br><br>
 The **RMarkdown File** has the entire project in it. All data used is in the **data** folder.
